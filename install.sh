@@ -124,6 +124,23 @@ if [ "$WITH_SERVICE" = "1" ]; then
     sudo systemctl --no-pager --lines=15 status "${SERVICE_NAME}.service" || true
 fi
 
+# ---------------------------------------------------------------- Abschluss
+
+# origin-URL dieses Klons fuer den update_manager-Block uebernehmen
+ORIGIN_URL=""
+if command -v git >/dev/null 2>&1; then
+    ORIGIN_URL="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
+fi
+if [ -z "$ORIGIN_URL" ]; then
+    ORIGIN_URL="<git-url-dieses-repos>"
+    ORIGIN_NOTE="  (kein origin-Remote gefunden - URL bitte selbst eintragen)"
+elif [ "${ORIGIN_URL#https://}" != "$ORIGIN_URL" ]; then
+    ORIGIN_NOTE="  (bei einem privaten Repo braucht der Pi Zugangsdaten:
+   Deploy-Key mit SSH-URL oder Token in der URL)"
+else
+    ORIGIN_NOTE=""
+fi
+
 cat <<EOF
 
 == Fertig
@@ -149,11 +166,11 @@ Damit Mainsail/Fluidd den Dienst neu starten darf, in moonraker.conf ergaenzen:
   [update_manager blv-neopixel]
   type: git_repo
   path: ${SRC_DIR}
-  origin: <deine-git-url>
+  origin: ${ORIGIN_URL}
   virtualenv: ${VENV_DIR}
   requirements: requirements.txt
   managed_services: ${SERVICE_NAME}
-
+${ORIGIN_NOTE}
 und in moonraker.asvc (bzw. ueber [authorization]) den Dienstnamen
 ${SERVICE_NAME} freigeben.
 EOF
