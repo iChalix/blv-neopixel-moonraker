@@ -1,0 +1,23 @@
+[Unit]
+Description=BLV NeoPixel Middleware (Moonraker -> NeoPixelBLVmgn V3.0)
+Documentation=https://github.com/mule1972/NeoPixelBLVmgn
+After=network-online.target moonraker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+SupplementaryGroups=dialout
+WorkingDirectory=__DIR__
+ExecStart=__PYTHON__ -m blv_neopixel --config __CONFIG__ run
+Restart=always
+RestartSec=5
+# Der Dienst darf nie den Drucker blockieren
+Nice=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=blv-neopixel
+
+[Install]
+WantedBy=multi-user.target
