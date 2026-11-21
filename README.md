@@ -52,9 +52,20 @@ cd ~/BLV-NeoPixel-Moonraker-Plugin
 
 Das Skript legt ein venv unter `~/blv-neopixel-env` an, installiert
 `websockets` und `pyserial`, kopiert die Konfiguration nach
-`~/printer_data/config/blv-neopixel.conf`, traegt die gefundene serielle
-Schnittstelle ein, richtet den systemd-Dienst `blv-neopixel` ein und startet
-ihn. Benoetigt werden Python 3.8 oder neuer und die Gruppe `dialout`.
+`~/printer_data/config/blv-neopixel.conf`, richtet den systemd-Dienst
+`blv-neopixel` ein und startet ihn. Benoetigt werden Python 3.8 oder neuer und
+die Gruppe `dialout`.
+
+Die serielle Schnittstelle traegt das Skript nur ein, wenn unter
+`/dev/serial/by-id/` **genau ein** USB-Seriell-Adapter (CH340, FTDI, CP210x,
+Prolific) steht. Arduino-, Klipper- und Probe-Eintraege (z. B.
+`usb-Arduino__www.arduino.cc__0042_...`, `usb-Cartographer_...`) zaehlen
+bewusst nicht mit: An einem Drucker sind das meist die MCUs, und dorthin
+darf die Middleware nichts senden. Gibt es null oder mehrere Treffer, bleibt
+`port` leer, das Skript listet die vorhandenen Geraete auf, und der Dienst
+wird installiert, aber **nicht gestartet**, bis `port` auf ein vorhandenes
+Geraet zeigt. Wer den Dienst erst nach einer Pruefung der Konfiguration
+installieren will, startet mit `./install.sh --no-service`.
 
 Die Arduino-Seite - Sketch-Einstellungen, Verdrahtung, Pegel - steht je
 Version in [arduino/V3.0-Einstellungen.md](arduino/V3.0-Einstellungen.md) und
@@ -169,6 +180,39 @@ journalctl -u blv-neopixel -f
 | V4.x: keine Zeile `Arduino fragt den Zustand ab` | Die Rueckleitung fehlt (oder Mega-Eigenheit, siehe Arduino-Doku). Unkritisch, der Heartbeat liefert die Daten. |
 | `Permission denied` auf dem Port | Benutzer nicht in `dialout`, oder ein anderer Prozess haelt den Port. |
 | Nach Neustart falscher Port | Pfad unter `/dev/serial/by-id/` verwenden statt `/dev/ttyUSB0`. |
+| `install.sh` meldet "Port nicht automatisch gesetzt" | Kein oder kein eindeutiger USB-Seriell-Adapter gefunden. Pfad des NeoPixel-Arduino selbst unter `[serial] port` eintragen, nicht den eines Drucker-MCUs. |
+| Arduino taucht am Pi nicht auf (`lsusb`, `ls /dev/serial/by-id/`) | Kabel ohne Datenleitungen, kein freier USB-Port oder der Hub hat keine Datenverbindung zum Pi. Bei `sudo dmesg -w` beim Anstecken muss ein neues Geraet erscheinen. |
+| Pi bleibt nach dem Herunterfahren unter Spannung (z. B. haelt er ein SSR) | Siehe "Strom und USB-Hub am Pi" unten. |
+
+### Strom und USB-Hub am Pi
+
+An einem Pi 3B+ waren die 5 V der USB-Ports nach dem Herunterfahren
+abgeschaltet (so beobachtet). Haengt der Drucker-Strom an einem SSR, das
+ueber diese Spannung gehalten wird (etwa ueber die Arduinos), nutzt man genau
+dieses Verhalten.
+
+Das geht kaputt, wenn ein **USB-Hub an der GPIO-Leiste mit Strom versorgt
+wird** und zugleich per USB-Kabel am Pi haengt: Die GPIO-5-V liegen immer an,
+und die 5-V-Leitung im Upstream-Kabel verbindet sie mit der geschalteten
+Schiene der USB-Ports. Alle Ports bleiben dann nach dem Herunterfahren
+versorgt, auch die Geraete am SSR. Beobachtet an einem Pi 3B+; der Hub wurde
+nur ueber die GPIO-Pins mit Strom versorgt und nach dem Trennen dieser
+Verbindung war das Abschalten wieder in Ordnung.
+
+Abhilfe: den Hub **nicht** ueber die GPIO-Leiste speisen, sondern nur ueber
+das USB-Kabel aus der geschalteten Schiene. Dann geht er beim Herunterfahren
+zusammen mit allem anderen aus - auch der Nano und die Ringe. Alternativ die
+5-V-Leitung im Upstream-Kabel unterbrechen; dann bleibt der Hub (und alles
+dahinter) nach dem Herunterfahren unter Spannung.
+
+Nach jedem Umbau pruefen, dass der Drucker beim Herunterfahren des Pi
+tatsaechlich abgeschaltet wird, und im Betrieb `vcgencmd get_throttled`
+kontrollieren: `0x0` ist gut, alles andere heisst Unterspannung.
+
+Ausserdem: Die 5-V-Leitung eines Hubs allein liefert nur begrenzt Strom
+(Pi 3: etwa 1,2 A fuer alle USB-Ports zusammen). Ein Probe wie der
+Cartographer hinter einem einfachen Hub kann zu Aussetzern fuehren - nach dem
+Umstecken einen kompletten Mesh-/Probe-Durchlauf testen.
 
 `selftest --all` laeuft ohne Drucker und Arduino und prueft die Rahmen beider
 Versionen gegen das nachgebaute Sketch-Verhalten - der erste Schritt, wenn

@@ -74,17 +74,47 @@ fi
 
 # ---------------------------------------------------------------- Konfiguration
 
+# Sucht USB-Seriell-Adapter (CH340, FTDI, CP210x, Prolific) unter
+# /dev/serial/by-id. Bewusst NICHT mitgezaehlt werden Arduino-, Klipper- und
+# Probe-Geraete (z. B. "usb-Arduino__www.arduino.cc__0042_...", "usb-Klipper_...",
+# "usb-Cartographer_..."): An einem Drucker sind das in der Regel die MCUs, und
+# die Middleware darf dort nichts hinschreiben.
+# Ergebnis: ADAPTER_COUNT (Anzahl) und ADAPTER_PATH (nur bei genau einem Treffer).
+detect_adapter() {
+    local dev name
+    ADAPTER_COUNT=0
+    ADAPTER_PATH=""
+    for dev in /dev/serial/by-id/*; do
+        [ -e "$dev" ] || continue
+        name="$(basename "$dev")"
+        case "$name" in
+            usb-1a86_*|usb-FTDI_*|usb-Silicon_Labs_*|usb-Prolific_*)
+                ADAPTER_COUNT=$((ADAPTER_COUNT + 1))
+                ADAPTER_PATH="$dev"
+                ;;
+        esac
+    done
+    if [ "$ADAPTER_COUNT" != "1" ]; then ADAPTER_PATH=""; fi
+}
+
+list_serial_devices() {
+    local dev found=0
+    for dev in /dev/serial/by-id/*; do
+        [ -e "$dev" ] || continue
+        found=1
+        echo "    $dev"
+    done
+    if [ "$found" = "0" ]; then echo "    (keine)"; fi
+}
+
 info "Konfiguration: ${CONFIG_FILE}"
 if [ -f "$CONFIG_FILE" ]; then
     echo "bleibt unveraendert (vorhanden)"
 else
     cp "${SRC_DIR}/config/blv-neopixel.conf" "$CONFIG_FILE"
-    DETECTED=""
-    for dev in /dev/serial/by-id/*; do
-        if [ -e "$dev" ]; then DETECTED="$dev"; break; fi
-    done
-    if [ -n "$DETECTED" ]; then
-        python3 - "$CONFIG_FILE" "$DETECTED" <<'PY'
+    detect_adapter
+    if [ -n "$ADAPTER_PATH" ]; then
+        python3 - "$CONFIG_FILE" "$ADAPTER_PATH" <<'PY'
 import re, sys
 path, port = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as fh:
@@ -93,12 +123,25 @@ text = re.sub(r"^port = .*$", "port = %s" % port, text, count=1, flags=re.M)
 with open(path, "w", encoding="utf-8") as fh:
     fh.write(text)
 PY
-        echo "serielle Schnittstelle eingetragen: ${DETECTED}"
+        echo "serielle Schnittstelle eingetragen: ${ADAPTER_PATH}"
     else
-        echo "ACHTUNG: keine serielle Schnittstelle gefunden."
-        echo "Bitte [serial] port in ${CONFIG_FILE} selbst setzen."
+        if [ "$ADAPTER_COUNT" = "0" ]; then
+            echo "ACHTUNG: kein USB-Seriell-Adapter (CH340/FTDI/CP210x) gefunden."
+        else
+            echo "ACHTUNG: ${ADAPTER_COUNT} USB-Seriell-Adapter gefunden - Auswahl nicht eindeutig."
+        fi
+        echo "Der Port wurde NICHT automatisch gesetzt. Vorhandene Geraete:"
+        list_serial_devices
+        echo "Arduino-, Klipper- und Probe-Eintraege gehoeren meist zum Drucker -"
+        echo "dorthin darf die Middleware nichts senden. Den Pfad des NeoPixel-Arduino"
+        echo "bitte in ${CONFIG_FILE} unter [serial] port selbst eintragen."
     fi
 fi
+
+# Zeigt der konfigurierte Port auf ein vorhandenes Geraet?
+CONFIGURED_PORT="$(sed -n 's/^port[[:space:]]*=[[:space:]]*//p' "$CONFIG_FILE" | head -n 1 | sed 's/[[:space:]]*#.*$//')"
+PORT_OK=0
+if [ -n "$CONFIGURED_PORT" ] && [ -e "$CONFIGURED_PORT" ]; then PORT_OK=1; fi
 
 # ---------------------------------------------------------------- Selbsttest
 
@@ -119,9 +162,17 @@ if [ "$WITH_SERVICE" = "1" ]; then
     rm -f "$TMP_UNIT"
     sudo systemctl daemon-reload
     sudo systemctl enable "${SERVICE_NAME}.service"
-    sudo systemctl restart "${SERVICE_NAME}.service"
-    sleep 2
-    sudo systemctl --no-pager --lines=15 status "${SERVICE_NAME}.service" || true
+    if [ "$PORT_OK" = "1" ]; then
+        sudo systemctl restart "${SERVICE_NAME}.service"
+        sleep 2
+        sudo systemctl --no-pager --lines=15 status "${SERVICE_NAME}.service" || true
+    else
+        echo
+        echo "Der Dienst wurde installiert, aber NICHT gestartet: [serial] port in"
+        echo "${CONFIG_FILE} zeigt auf kein vorhandenes Geraet (aktuell: '${CONFIGURED_PORT}')."
+        echo "Nach dem Eintragen des richtigen Pfads starten mit:"
+        echo "  sudo systemctl restart ${SERVICE_NAME}"
+    fi
 fi
 
 # ---------------------------------------------------------------- Abschluss
@@ -167,10 +218,16 @@ Damit Mainsail/Fluidd den Dienst neu starten darf, in moonraker.conf ergaenzen:
   type: git_repo
   path: ${SRC_DIR}
   origin: ${ORIGIN_URL}
+  primary_branch: main
   virtualenv: ${VENV_DIR}
   requirements: requirements.txt
   managed_services: ${SERVICE_NAME}
 ${ORIGIN_NOTE}
-und in moonraker.asvc (bzw. ueber [authorization]) den Dienstnamen
-${SERVICE_NAME} freigeben.
+
+primary_branch ist noetig: Moonraker nimmt sonst "master" an, dieses Repo
+nutzt "main". Ausserdem den Dienstnamen fuer Moonraker freigeben und
+Moonraker neu starten:
+
+  echo ${SERVICE_NAME} >> $(dirname "$CONFIG_DIR")/moonraker.asvc
+  sudo systemctl restart moonraker
 EOF
