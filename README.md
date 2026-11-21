@@ -108,8 +108,18 @@ Unterbefehl.
 
 ## Bedienung
 
-Alle Befehle mit dem venv-Python, z. B.
-`~/blv-neopixel-env/bin/python -m blv_neopixel <befehl>`:
+Alle Befehle mit dem venv-Python, **im Projektordner** ausgefuehrt - das Paket
+`blv_neopixel` ist nicht ins venv installiert und wird nur dort gefunden
+(sonst: `No module named blv_neopixel`):
+
+```bash
+cd ~/blv-neopixel-moonraker
+~/blv-neopixel-env/bin/python -m blv_neopixel <befehl>
+```
+
+Die Konfiguration findet das Programm selbst, zuerst unter
+`~/printer_data/config/blv-neopixel.conf`; mit `--config` laesst sie sich
+ueberschreiben.
 
 | Befehl | Zweck |
 |--------|-------|
@@ -135,6 +145,7 @@ frei ist:
 
 ```bash
 sudo systemctl stop blv-neopixel
+cd ~/blv-neopixel-moonraker
 ~/blv-neopixel-env/bin/python -m blv_neopixel simulate --preview
 sudo systemctl start blv-neopixel
 ```

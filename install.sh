@@ -7,6 +7,9 @@
 set -eu
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Das Paket blv_neopixel ist nicht ins venv installiert und wird nur im
+# Projektordner gefunden - auch der Selbsttest unten braucht ihn als Arbeitsordner.
+cd "$SRC_DIR"
 VENV_DIR="${VENV_DIR:-${HOME}/blv-neopixel-env}"
 SERVICE_NAME="blv-neopixel"
 WITH_SERVICE=1
@@ -205,12 +208,17 @@ geflashten Sketch passen -
   sketch_version = 4.1   fuer Release V4.0/V4.1 (Standard)
   sketch_version = 3.0   fuer Release V3.0
 
-Nuetzliche Befehle:
+Nuetzliche Befehle - im Projektordner ausfuehren (das Paket ist nicht ins
+venv installiert und wird nur dort gefunden):
+  cd ${SRC_DIR}
   ${VENV_DIR}/bin/python -m blv_neopixel --config ${CONFIG_FILE} config
   ${VENV_DIR}/bin/python -m blv_neopixel --config ${CONFIG_FILE} ports
   ${VENV_DIR}/bin/python -m blv_neopixel --config ${CONFIG_FILE} selftest --all
-  sudo systemctl stop ${SERVICE_NAME} && \\
-    ${VENV_DIR}/bin/python -m blv_neopixel --config ${CONFIG_FILE} simulate --preview
+
+Ringe ausprobieren (Dienst vorher anhalten, sonst belegt er die Schnittstelle):
+  sudo systemctl stop ${SERVICE_NAME}
+  ${VENV_DIR}/bin/python -m blv_neopixel --config ${CONFIG_FILE} simulate --preview
+  sudo systemctl start ${SERVICE_NAME}
 
 Damit Mainsail/Fluidd den Dienst neu starten darf, in moonraker.conf ergaenzen:
 
