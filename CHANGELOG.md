@@ -13,6 +13,8 @@ beim Release einen datierten Abschnitt (siehe README, Abschnitt "Releases").
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-22
+
 ### Doku
 - README: Drucker-SSR ueber einen GPIO (GPIO27) schalten. Die Firmware setzt
   den Pin beim Booten auf HIGH (`gpio=27=op,dh`), ein

@@ -11,7 +11,7 @@ Dieses Paket uebersetzt den Klipper-Zustand in das jeweilige Format
 serielle Schnittstelle an den Arduino.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 #: Sketch-Versionen, die diese Middleware bedienen kann
 SKETCH_VERSIONS = ("V3.0", "V4.0/V4.1")
