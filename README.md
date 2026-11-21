@@ -235,10 +235,10 @@ unklar ist, ob die Middleware oder die Hardware das Problem ist.
 python3 -m unittest discover -s tests
 ```
 
-122 Tests, keine Abhaengigkeiten ausser der Standardbibliothek: Rahmenformat
+146 Tests, keine Abhaengigkeiten ausser der Standardbibliothek: Rahmenformat
 und Parserregeln beider Versionen, die nachgebauten Sketch-Parser samt
-LED-Ausgabe, die Abbildung der Klipper-Zustaende und das Laden der
-Konfiguration.
+LED-Ausgabe, die Abbildung der Klipper-Zustaende, das Laden der
+Konfiguration und der Abgleich von Version und CHANGELOG.
 
 Dazu ein Integrationstest, der einen Fake-Moonraker startet, ueber ein pty
 mitliest, was der Arduino bekommen haette, und bei V4.x auch den fragenden
@@ -261,6 +261,46 @@ Arduino spielt - ohne Drucker und ohne Arduino:
 | `service.py` | Sendetakt: auf Anfrage, bei Aenderung, als Heartbeat |
 | `sketchmodel.py` | beide Sketch-Parser in Python nachgebaut, plus LED-Farben |
 | `simulator.py` | erfundener Druckerzustand fuer Tests ohne Drucker |
+
+## Releases
+
+Versionen folgen [Semantic Versioning](https://semver.org/lang/de/) und sind
+als Git-Tags `vX.Y.Z` und als GitHub-Releases veroeffentlicht. Die einzige
+Versionsquelle ist `__version__` in `blv_neopixel/__init__.py`; was sich
+geaendert hat, steht im [CHANGELOG](CHANGELOG.md).
+
+**Welcher Stand laeuft?** `--version` und die erste Zeile im Dienst-Log
+nennen die Version und den genauen Git-Stand:
+
+```bash
+cd ~/blv-neopixel-moonraker && ~/blv-neopixel-env/bin/python -m blv_neopixel --version
+```
+
+```
+blv-neopixel 1.2.0 (v1.2.0)            # genau der Release
+blv-neopixel 1.2.0 (v1.2.0-3-g1983b41) # drei Commits nach dem Release
+```
+
+**Einen Release schneiden** (im Entwicklungsklon, auf `main`):
+
+1. Waehrend der Arbeit Aenderungen unter `## [Unreleased]` im CHANGELOG
+   eintragen (Hinzugefuegt, Geaendert, Behoben, Doku).
+2. Vorschau: `python3 scripts/release.py minor --dry-run` (oder `patch`,
+   `major`, oder eine feste Version wie `1.3.0`). Das zeigt die Release-Notizen
+   und aendert nichts.
+3. Release: `python3 scripts/release.py minor`.
+
+Das Skript prueft vorher, dass der Arbeitsordner sauber ist, der Branch `main`
+heisst, `origin` nicht weiter ist als lokal, der Tag noch nicht existiert,
+`__version__` und CHANGELOG zusammenpassen und alle Tests durchlaufen. Dann
+macht es aus `[Unreleased]` einen datierten Abschnitt, setzt `__version__`,
+committet `Release vX.Y.Z`, legt einen annotierten Tag an, pusht `main` und
+den Tag und erstellt mit `gh` das GitHub-Release mit den CHANGELOG-Eintraegen.
+Vor dem Veroeffentlichen fragt es nach. Mit `--no-push` bleibt alles lokal,
+mit `--no-github` entfaellt das GitHub-Release.
+
+Ein leeres `[Unreleased]` verhindert den Release: Ohne Eintraege gibt es
+nichts zu veroeffentlichen.
 
 ## Lizenz
 

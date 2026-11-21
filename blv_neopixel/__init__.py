@@ -16,4 +16,33 @@ __version__ = "1.1.0"
 #: Sketch-Versionen, die diese Middleware bedienen kann
 SKETCH_VERSIONS = ("V3.0", "V4.0/V4.1")
 
-__all__ = ["__version__", "SKETCH_VERSIONS"]
+import os
+import subprocess
+
+
+def describe() -> str:
+    """Version, in einem Git-Klon zusaetzlich der genaue Stand.
+
+    Beispiel: ``1.2.0 (v1.2.0)`` auf einem getaggten Release,
+    ``1.2.0 (v1.2.0-3-g1983b41)`` drei Commits danach, ``-dirty`` bei
+    ungespeicherten Aenderungen. Ohne Git (oder ausserhalb eines Klons) kommt
+    nur die Versionsnummer zurueck.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always", "--dirty"],
+            cwd=os.path.dirname(here),
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return __version__
+    stand = result.stdout.strip()
+    if result.returncode != 0 or not stand:
+        return __version__
+    return "%s (%s)" % (__version__, stand)
+
+
+__all__ = ["__version__", "SKETCH_VERSIONS", "describe"]

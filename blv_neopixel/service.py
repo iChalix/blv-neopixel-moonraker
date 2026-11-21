@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 
+from . import describe
 from .config import Config
 from .mapper import KlipperMapper
 from .moonraker import MoonrakerClient
@@ -177,7 +178,7 @@ class Service:
         self.client = MoonrakerClient(config.moonraker, self.mapper, on_change=self.sender.wake)
 
     async def run(self) -> None:
-        LOGGER.info("BLV-NeoPixel-Middleware startet")
+        LOGGER.info("BLV-NeoPixel-Middleware %s startet", describe())
         LOGGER.info("%s", self.config.describe())
         if self.config.protocol.polls:
             LOGGER.info(

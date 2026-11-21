@@ -7,7 +7,7 @@ import asyncio
 import logging
 import sys
 
-from . import __version__, config as config_module, protocol as protocol_module, sketchmodel
+from . import config as config_module, describe, protocol as protocol_module, sketchmodel
 from .config import Config, ConfigError
 from .service import Service, run_provider
 from .simulator import Simulator
@@ -345,7 +345,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sketch-Version fuer diesen Aufruf: 3.0 oder 4.1 (alt/neu erlaubt)",
     )
     parser.add_argument("--log-level", default="", help="debug, info, warning, error")
-    parser.add_argument("--version", action="version", version="blv-neopixel %s" % __version__)
+    parser.add_argument("--version", action="version", version="blv-neopixel %s" % describe())
     subparsers = parser.add_subparsers(dest="command")
 
     run = subparsers.add_parser("run", help="Dienst starten (Standard)")
