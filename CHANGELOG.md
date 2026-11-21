@@ -13,6 +13,8 @@ beim Release einen datierten Abschnitt (siehe README, Abschnitt "Releases").
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-21
+
 ### Hinzugefuegt
 - Releaseverwaltung: dieses CHANGELOG, `scripts/release.py` (Version, Tag und
   GitHub-Release in einem Schritt) und Tests, die Version und CHANGELOG
