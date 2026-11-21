@@ -193,37 +193,132 @@ journalctl -u blv-neopixel -f
 | Nach Neustart falscher Port | Pfad unter `/dev/serial/by-id/` verwenden statt `/dev/ttyUSB0`. |
 | `install.sh` meldet "Port nicht automatisch gesetzt" | Kein oder kein eindeutiger USB-Seriell-Adapter gefunden. Pfad des NeoPixel-Arduino selbst unter `[serial] port` eintragen, nicht den eines Drucker-MCUs. |
 | Arduino taucht am Pi nicht auf (`lsusb`, `ls /dev/serial/by-id/`) | Kabel ohne Datenleitungen, kein freier USB-Port oder der Hub hat keine Datenverbindung zum Pi. Bei `sudo dmesg -w` beim Anstecken muss ein neues Geraet erscheinen. |
-| Pi bleibt nach dem Herunterfahren unter Spannung (z. B. haelt er ein SSR) | Siehe "Strom und USB-Hub am Pi" unten. |
+| Drucker geht beim Herunterfahren des Pi nicht aus (SSR bleibt an) | Siehe "Strom und USB-Hub am Pi" unten - empfohlen: SSR ueber GPIO27 schalten. |
 
 ### Strom und USB-Hub am Pi
 
-An einem Pi 3B+ waren die 5 V der USB-Ports nach dem Herunterfahren
-abgeschaltet (so beobachtet). Haengt der Drucker-Strom an einem SSR, das
-ueber diese Spannung gehalten wird (etwa ueber die Arduinos), nutzt man genau
-dieses Verhalten.
+**Das Problem.** An einem Pi 3B+ waren die 5 V der USB-Ports nach dem
+Herunterfahren abgeschaltet (so beobachtet). Haengt der Drucker-Strom an
+einem SSR, das ueber diese Spannung gehalten wird (etwa ueber die Arduinos an
+den USB-Ports), nutzt man genau dieses Verhalten. Das geht kaputt, sobald ein
+**USB-Hub an der GPIO-Leiste mit Strom versorgt wird** und zugleich per
+USB-Kabel am Pi haengt: Die GPIO-5-V liegen immer an, und die 5-V-Leitung im
+Upstream-Kabel verbindet sie mit der geschalteten Schiene der USB-Ports. Alle
+Ports bleiben dann nach dem Herunterfahren versorgt, auch die Geraete, die
+das SSR halten. Beobachtet an einem Pi 3B+ mit einem USB-HAT
+(`USB_HUB_HAT_V1.4`); nach dem Trennen der GPIO-Versorgung des HAT war das
+Abschalten wieder in Ordnung.
 
-Das geht kaputt, wenn ein **USB-Hub an der GPIO-Leiste mit Strom versorgt
-wird** und zugleich per USB-Kabel am Pi haengt: Die GPIO-5-V liegen immer an,
-und die 5-V-Leitung im Upstream-Kabel verbindet sie mit der geschalteten
-Schiene der USB-Ports. Alle Ports bleiben dann nach dem Herunterfahren
-versorgt, auch die Geraete am SSR. Beobachtet an einem Pi 3B+; der Hub wurde
-nur ueber die GPIO-Pins mit Strom versorgt und nach dem Trennen dieser
-Verbindung war das Abschalten wieder in Ordnung.
+#### Empfohlen: das Drucker-SSR ueber einen GPIO schalten
 
-Abhilfe: den Hub **nicht** ueber die GPIO-Leiste speisen, sondern nur ueber
-das USB-Kabel aus der geschalteten Schiene. Dann geht er beim Herunterfahren
-zusammen mit allem anderen aus - auch der Nano und die Ringe. Alternativ die
-5-V-Leitung im Upstream-Kabel unterbrechen; dann bleibt der Hub (und alles
-dahinter) nach dem Herunterfahren unter Spannung.
+Das SSR haengt dann nicht mehr an der USB-Spannung, und der Hub darf seinen
+Strom direkt von der GPIO-Leiste bekommen. Die Firmware setzt den Pin beim
+Booten auf HIGH, ein Hook am Ende des Herunterfahrens auf LOW:
 
-Nach jedem Umbau pruefen, dass der Drucker beim Herunterfahren des Pi
-tatsaechlich abgeschaltet wird, und im Betrieb `vcgencmd get_throttled`
-kontrollieren: `0x0` ist gut, alles andere heisst Unterspannung.
+| Zustand | GPIO27 | Drucker |
+|---|---|---|
+| Pi bootet (vor der Firmware-Zeile) | LOW | aus |
+| Pi laeuft | HIGH | an |
+| nach `shutdown -h now` | LOW (Hook) | aus |
+| Neustart | kurz LOW (Reset) | kurz aus |
 
-Ausserdem: Die 5-V-Leitung eines Hubs allein liefert nur begrenzt Strom
-(Pi 3: etwa 1,2 A fuer alle USB-Ports zusammen). Ein Probe wie der
-Cartographer hinter einem einfachen Hub kann zu Aussetzern fuehren - nach dem
-Umstecken einen kompletten Mesh-/Probe-Durchlauf testen.
+Getestet mit einem Pi 3B+ und einem Fotek SSR-25 DA (Steuereingang 3-32 VDC).
+
+**Pin waehlen.** GPIO 9 bis 27 starten nach einem Reset als Eingang mit
+Pull-down, also LOW - geeignet. GPIO 0 bis 8 starten mit Pull-up und sind
+ungeeignet. Hier: **GPIO27 (Pin 13)**, GND auf Pin 14. Vorher pruefen, dass
+nichts anderes den Pin nutzt: `pinctrl get 27` soll `ip pd` zeigen.
+
+**Verdrahtung** (Drucker vorher vom Netz trennen, nur am Steuereingang
+arbeiten):
+
+* direkt: GPIO27 an SSR `3 (+)`, SSR `4 (-)` an GND. 3,3 V liegen im
+  Steuerbereich solcher SSRs; ob es zuverlaessig schaltet, zeigt die LED am
+  SSR. Nachbauten schalten an der Untergrenze nicht immer sicher.
+* mit Transistor, wenn das SSR bei 3,3 V nicht sicher schaltet: SSR `3 (+)`
+  an 5 V (Pin 2), SSR `4 (-)` an den Kollektor eines NPN (z. B. BC337),
+  Emitter an GND, Basis ueber 1 kOhm an GPIO27, 10 kOhm von der Basis nach
+  GND. Nur moeglich, wenn `4 (-)` nicht mit anderen SSRs verbunden ist.
+
+Die bisherigen Steuerleitungen am SSR abklemmen - es darf nur eine Quelle
+geben.
+
+**Einschalten beim Booten** - in `/boot/firmware/config.txt`, unter `[all]`:
+
+```ini
+gpio=27=op,dh
+```
+
+**Ausschalten am Ende des Herunterfahrens** - systemd fuehrt alles in
+`/usr/lib/systemd/system-shutdown/` erst aus, wenn alle Dienste (auch Klipper
+und Moonraker) beendet sind, und uebergibt `poweroff`, `halt`, `reboot` oder
+`kexec`. Der Ordner existiert nicht immer:
+
+```bash
+sudo mkdir -p /usr/lib/systemd/system-shutdown
+sudo tee /usr/lib/systemd/system-shutdown/printer-power-off >/dev/null <<'EOF'
+#!/bin/sh
+# Drucker-SSR an GPIO27 am Ende des Herunterfahrens abschalten.
+# systemd-shutdown uebergibt: poweroff, halt, reboot oder kexec.
+case "$1" in
+    poweroff|halt) /usr/bin/pinctrl set 27 op dl ;;
+esac
+EOF
+sudo chmod +x /usr/lib/systemd/system-shutdown/printer-power-off
+```
+
+`pinctrl` muss unter `/usr/bin` liegen (`command -v pinctrl`), sonst den Pfad
+im Hook anpassen; es kommt aus dem Paket `raspi-utils`.
+
+**Testen**, am besten zuerst mit dem Multimeter an Pin 13/14 statt mit dem
+SSR:
+
+```bash
+pinctrl get 27                                                     # nach dem Neustart: op ... | hi
+sudo /usr/lib/systemd/system-shutdown/printer-power-off reboot && pinctrl get 27   # bleibt hi
+sudo /usr/lib/systemd/system-shutdown/printer-power-off halt && pinctrl get 27     # jetzt lo
+pinctrl set 27 op dh                                               # wieder einschalten
+sudo shutdown -h now                                               # am Ende: 0 V bzw. LED aus
+```
+
+Hinweise:
+
+* **Nicht** `gpioget 27` zum Pruefen verwenden - das stellt den Pin auf
+  Eingang um und schaltet den Drucker ab.
+* Das Firmware-Overlay `gpio-poweroff` ist dafuer nicht gedacht: Es soll die
+  Stromversorgung des Pi selbst abschalten, pulst den Pin beim Ausschalten
+  (an-aus-an) und warnt vor undefiniertem Verhalten, wenn der Pi danach weiter
+  Strom hat.
+* Wer den Drucker zusaetzlich in Mainsail schalten will, kann in
+  `moonraker.conf` einen `[power printer]`-Block mit `type: gpio`,
+  `pin: gpiochip0/gpio27` und **`initial_state: on`** anlegen. Ohne
+  `initial_state: on` uebernimmt Moonraker den Pin beim Start vermutlich mit
+  LOW. Das endgueltige Abschalten nach dem Herunterfahren bleibt Sache des
+  Hooks.
+* `config.txt` und der Hook liegen ausserhalb dieses Repos und muessen nach
+  einer Neuinstallation des Pi neu eingerichtet werden.
+
+#### Den Hub mit Strom versorgen
+
+* **Ueber die GPIO-Leiste** (so ist ein USB-HAT gebaut): Dann zusaetzlich im
+  Upstream-Kabel zum Pi die 5-V-Leitung (VBUS) unterbrechen, etwa den
+  VBUS-Kontakt am USB-A-Stecker abkleben (mit dem Multimeter pruefen: Er hat
+  Durchgang zu Pin 2 des Pi). Sonst umgeht der Hub die Strombegrenzung der
+  USB-Ports des Pi. Danach mit `lsusb` pruefen, dass der Hub noch erscheint.
+* **Nur ueber das USB-Kabel**: Wer das SSR weiter ueber die USB-Spannung
+  haelt, darf den Hub nicht ueber die GPIO-Leiste versorgen - z. B. eine
+  2x20-GPIO-Verlaengerung mit abgeknipsten Pins 2 und 4 zwischen Pi und HAT
+  setzen. Der Hub geht dann beim Herunterfahren mit aus.
+
+Pi und Hub haengen in beiden Faellen am selben Netzteil. Ein Pi 3B+ zieht
+selbst 0,5-1 A, das offizielle Netzteil liefert 2,5 A. Bei vielen Geraeten am
+Hub ein staerkeres 5-V-Netzteil verwenden und dann Pi und HAT gemeinsam ueber
+die GPIO-Leiste speisen - nie zwei Netzteile an derselben 5-V-Schiene. Im
+Betrieb `vcgencmd get_throttled` kontrollieren: `0x0` ist gut, alles andere
+heisst Unterspannung. NeoPixel-Ringe gehoeren an ein eigenes 5-V-Netzteil.
+
+Ein Probe wie der Cartographer hinter einem einfachen Hub kann zu Aussetzern
+fuehren - nach dem Umstecken einen kompletten Mesh-/Probe-Durchlauf testen.
 
 `selftest --all` laeuft ohne Drucker und Arduino und prueft die Rahmen beider
 Versionen gegen das nachgebaute Sketch-Verhalten - der erste Schritt, wenn

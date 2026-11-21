@@ -13,6 +13,14 @@ beim Release einen datierten Abschnitt (siehe README, Abschnitt "Releases").
 
 ## [Unreleased]
 
+### Doku
+- README: Drucker-SSR ueber einen GPIO (GPIO27) schalten. Die Firmware setzt
+  den Pin beim Booten auf HIGH (`gpio=27=op,dh`), ein
+  systemd-shutdown-Hook setzt ihn am Ende des Herunterfahrens auf LOW. Damit
+  darf ein USB-HAT seinen Strom direkt von der GPIO-Leiste bekommen, ohne das
+  Abschalten des Druckers zu verhindern. Dazu Verdrahtung, Pin-Wahl,
+  Testablauf und Hinweise zur Stromversorgung des Hubs.
+
 ## [1.2.0] - 2026-11-21
 
 ### Hinzugefuegt
