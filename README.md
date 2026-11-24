@@ -56,9 +56,10 @@ Das Skript legt ein venv unter `~/blv-neopixel-env` an, installiert
 `blv-neopixel` ein und startet ihn. Benoetigt werden Python 3.8 oder neuer und
 die Gruppe `dialout`.
 
-Die serielle Schnittstelle traegt das Skript nur ein, wenn unter
-`/dev/serial/by-id/` **genau ein** USB-Seriell-Adapter (CH340, FTDI, CP210x,
-Prolific) steht. Arduino-, Klipper- und Probe-Eintraege (z. B.
+Die serielle Schnittstelle traegt das Skript nur ein, wenn **genau ein**
+USB-Seriell-Adapter (CH340, FTDI, CP210x, Prolific) angeschlossen ist.
+Gezaehlt werden die Schnittstellen selbst, nicht die Namen unter
+`/dev/serial/by-id/` - zwei CH340 teilen sich dort einen. Arduino-, Klipper- und Probe-Eintraege (z. B.
 `usb-Arduino__www.arduino.cc__0042_...`, `usb-Cartographer_...`) zaehlen
 bewusst nicht mit: An einem Drucker sind das meist die MCUs, und dorthin
 darf die Middleware nichts senden. Gibt es null oder mehrere Treffer, bleibt
@@ -66,6 +67,21 @@ darf die Middleware nichts senden. Gibt es null oder mehrere Treffer, bleibt
 wird installiert, aber **nicht gestartet**, bis `port` auf ein vorhandenes
 Geraet zeigt. Wer den Dienst erst nach einer Pruefung der Konfiguration
 installieren will, startet mit `./install.sh --no-service`.
+
+**Zwei CH340 am selben Pi.** CH340-Nachbauten haben keine Seriennummer und
+bekommen unter `/dev/serial/by-id/` alle denselben Namen; sichtbar bleibt nur
+einer, und das kann nach jedem Neustart ein anderer sein. Dann fuer **beide**
+Geraete den Pfad unter `/dev/serial/by-path/` eintragen und jedes an seiner
+USB-Buchse lassen:
+
+```bash
+ls -l /dev/serial/by-path/
+```
+
+Einen schon laufenden Dienst umstellen, **bevor** der zweite Adapter
+angesteckt wird - sonst schreibt die Middleware womoeglich in das fremde
+Geraet. Gibt es zwei Eintraege fuer dieselbe Buchse (`...-usb-...` und
+`...-usbv2-...`), den mit `-usb-` nehmen.
 
 Die Arduino-Seite - Sketch-Einstellungen, Verdrahtung, Pegel - steht je
 Version in [arduino/V3.0-Einstellungen.md](arduino/V3.0-Einstellungen.md) und
@@ -190,7 +206,8 @@ journalctl -u blv-neopixel -f
 | Status wechselt, Temperaturen nicht | Zu viele Rahmen: `min_interval` erhoehen (der AVR hat nur 64 Byte RX-Puffer). |
 | V4.x: keine Zeile `Arduino fragt den Zustand ab` | Die Rueckleitung fehlt (oder Mega-Eigenheit, siehe Arduino-Doku). Unkritisch, der Heartbeat liefert die Daten. |
 | `Permission denied` auf dem Port | Benutzer nicht in `dialout`, oder ein anderer Prozess haelt den Port. |
-| Nach Neustart falscher Port | Pfad unter `/dev/serial/by-id/` verwenden statt `/dev/ttyUSB0`. |
+| Nach Neustart falscher Port | Pfad unter `/dev/serial/by-id/` verwenden statt `/dev/ttyUSB0`, bei zwei CH340 den unter `/dev/serial/by-path/`. |
+| Zwei CH340 angeschlossen, unter `/dev/serial/by-id/` steht nur einer | CH340 haben keine Seriennummer und teilen sich den Namen. Fuer beide `/dev/serial/by-path/` verwenden (siehe Installation). |
 | `install.sh` meldet "Port nicht automatisch gesetzt" | Kein oder kein eindeutiger USB-Seriell-Adapter gefunden. Pfad des NeoPixel-Arduino selbst unter `[serial] port` eintragen, nicht den eines Drucker-MCUs. |
 | Arduino taucht am Pi nicht auf (`lsusb`, `ls /dev/serial/by-id/`) | Kabel ohne Datenleitungen, kein freier USB-Port oder der Hub hat keine Datenverbindung zum Pi. Bei `sudo dmesg -w` beim Anstecken muss ein neues Geraet erscheinen. |
 | Drucker geht beim Herunterfahren des Pi nicht aus (SSR bleibt an) | Siehe "Strom und USB-Hub am Pi" unten - empfohlen: SSR ueber GPIO27 schalten. |
@@ -330,14 +347,16 @@ unklar ist, ob die Middleware oder die Hardware das Problem ist.
 python3 -m unittest discover -s tests
 ```
 
-146 Tests, keine Abhaengigkeiten ausser der Standardbibliothek: Rahmenformat
+159 Tests, keine Abhaengigkeiten ausser der Standardbibliothek: Rahmenformat
 und Parserregeln beider Versionen, die nachgebauten Sketch-Parser samt
-LED-Ausgabe, die Abbildung der Klipper-Zustaende, das Laden der
-Konfiguration und der Abgleich von Version und CHANGELOG.
+LED-Ausgabe, die Abbildung der Klipper-Zustaende, die Moonraker-Sitzung, das
+Laden der Konfiguration, die Adaptererkennung in `install.sh` und der Abgleich
+von Version und CHANGELOG.
 
 Dazu ein Integrationstest, der einen Fake-Moonraker startet, ueber ein pty
-mitliest, was der Arduino bekommen haette, und bei V4.x auch den fragenden
-Arduino spielt - ohne Drucker und ohne Arduino:
+mitliest, was der Arduino bekommen haette, bei V4.x auch den fragenden
+Arduino spielt und einen Klipper-Neustart durchlaeuft - ohne Drucker und ohne
+Arduino:
 
 ```bash
 ~/blv-neopixel-env/bin/python tests/integration_moonraker.py        # beide Versionen

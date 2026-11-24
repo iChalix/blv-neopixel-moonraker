@@ -13,6 +13,25 @@ beim Release einen datierten Abschnitt (siehe README, Abschnitt "Releases").
 
 ## [Unreleased]
 
+### Behoben
+- Nach einem Klipper-Neustart (FIRMWARE_RESTART) blockierte die Erneuerung des
+  Abonnements die Leseschleife, ueber die ihre Antwort kommen muss: Die Ringe
+  zeigten bis zum Ablauf von `connect_timeout` (10 s) keine Temperaturen, dann
+  baute die Middleware die Verbindung neu auf. Das Abonnement laeuft jetzt in
+  einer eigenen Aufgabe, die mit der Sitzung endet; schlaegt es fehl, wird neu
+  verbunden.
+- `install.sh` hielt zwei CH340 fuer einen: Ohne Seriennummer teilen sie sich
+  einen Namen unter `/dev/serial/by-id/`. Gezaehlt werden jetzt die
+  Schnittstellen selbst; bei mehreren Adaptern wird nichts eingetragen und jede
+  Buchse einmal mit ihrem Pfad unter `/dev/serial/by-path/` aufgelistet.
+- `install.sh` liess ohne eindeutigen Treffer den Beispielpfad aus der Vorlage
+  stehen, statt `port` zu leeren. Er konnte auf einen fremden CH340 zeigen, und
+  der Dienst wurde dann trotzdem gestartet.
+
+### Doku
+- README, Konfiguration und `ports`: bei zwei CH340 am selben Pi den Pfad unter
+  `/dev/serial/by-path/` verwenden.
+
 ## [1.2.1] - 2026-11-22
 
 ### Doku

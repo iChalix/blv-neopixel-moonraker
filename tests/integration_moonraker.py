@@ -6,7 +6,8 @@ spielt der Test zusaetzlich den fragenden Arduino und schickt
 ``M409 F"d99f"`` in die Leitung.
 
 Braucht ``websockets`` und ``pyserial``, laeuft aber ohne Drucker und ohne
-Arduino:
+Arduino. Ein zweiter Durchgang spielt einen Klipper-Neustart
+(FIRMWARE_RESTART) durch:
 
     ~/blv-neopixel-env/bin/python tests/integration_moonraker.py          # beide Versionen
     ~/blv-neopixel-env/bin/python tests/integration_moonraker.py 4.1      # nur V4.x
@@ -51,6 +52,25 @@ SCRIPT = [
     (0.8, {"print_stats": {"state": "complete"}, "pause_resume": {"is_paused": False}}),
 ]
 
+#: Was das Abonnement nach dem Klipper-Neustart zurueckgibt
+RESTARTED = {
+    "print_stats": {"state": "standby"},
+    "display_status": {"progress": 0.0},
+    "idle_timeout": {"state": "Idle"},
+    "pause_resume": {"is_paused": False},
+    "virtual_sdcard": {"progress": 0.0},
+    "heater_bed": {"temperature": 33.3, "target": 0.0},
+    "extruder": {"temperature": 44.4, "target": 0.0},
+}
+
+#: Aktualisierung nach dem Neustart - kommt nur an, wenn die Verbindung haelt
+AFTER_RESTART = {"extruder": {"temperature": 55.5}}
+
+#: Laufzeiten in Sekunden. Der Neustart muss deutlich unter connect_timeout
+#: (10 s) durch sein - so lange hing die Middleware frueher.
+SCRIPT_DURATION = sum(delay for delay, _ in SCRIPT) + 2.5
+RESTART_DURATION = 6.0
+
 
 class Fake:
     """Sammelt, was der Fake-Moonraker abonniert und verschickt."""
@@ -58,6 +78,20 @@ class Fake:
     def __init__(self):
         self.subscribed = {}
         self.notifications = 0
+        self.connections = 0
+        self.subscriptions = 0
+
+
+async def drive_restart(connection, fake):
+    """Klipper-Neustart: getrennt, wieder bereit, danach neue Werte."""
+    for delay, method, params in (
+        (1.0, "notify_klippy_disconnected", []),
+        (1.0, "notify_klippy_ready", []),
+        (1.0, "notify_status_update", [AFTER_RESTART, 1234.5]),
+    ):
+        await asyncio.sleep(delay)
+        await connection.send(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}))
+        fake.notifications += 1
 
 
 async def drive(connection, fake):
@@ -74,9 +108,10 @@ async def drive(connection, fake):
     fake.notifications += 1
 
 
-def make_handler(fake):
+def make_handler(fake, drive_first):
     async def handler(connection):
         driver = None
+        fake.connections += 1
         try:
             async for raw in connection:
                 message = json.loads(raw)
@@ -85,8 +120,11 @@ def make_handler(fake):
                     result = {"klippy_state": "ready", "klippy_connected": True}
                 elif method == "printer.objects.subscribe":
                     fake.subscribed.update(message["params"]["objects"])
-                    result = {"eventtime": 1.0, "status": INITIAL}
-                    driver = asyncio.create_task(drive(connection, fake))
+                    fake.subscriptions += 1
+                    status = INITIAL if fake.subscriptions == 1 else RESTARTED
+                    result = {"eventtime": 1.0, "status": status}
+                    if fake.subscriptions == 1:
+                        driver = asyncio.create_task(drive_first(connection, fake))
                 else:
                     result = {}
                 await connection.send(
@@ -124,7 +162,7 @@ async def fake_arduino_requests(master_fd, command, interval=1.0):
         os.write(master_fd, (command + "\r\n").encode("ascii"))
 
 
-async def collect(version):
+async def collect(version, drive_first=drive, duration=SCRIPT_DURATION):
     fake = Fake()
     master_fd, slave_fd = os.openpty()
     slave_path = os.ttyname(slave_fd)
@@ -134,7 +172,7 @@ async def collect(version):
     loop = asyncio.get_running_loop()
     loop.add_reader(master_fd, lambda: received.extend(os.read(master_fd, 4096) or b""))
 
-    async with websockets.serve(make_handler(fake), "127.0.0.1", 0) as server:
+    async with websockets.serve(make_handler(fake, drive_first), "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
         config_path = write_config(slave_path, "ws://127.0.0.1:%d/websocket" % port, version)
         config = config_module.load(config_path)
@@ -147,7 +185,7 @@ async def collect(version):
                     fake_arduino_requests(master_fd, config.protocol.request_command)
                 )
             )
-        await asyncio.sleep(sum(delay for delay, _ in SCRIPT) + 2.5)
+        await asyncio.sleep(duration)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -159,15 +197,17 @@ async def collect(version):
     return bytes(received), fake, service
 
 
-def analyse(version, raw, fake, service):
-    protocol = service.config.protocol
-    failures = []
-
+def make_check(version, failures):
     def check(name, condition, detail=""):
         print("  [%s] %s%s" % ("ok" if condition else "FEHLER", name, (" - " + detail) if detail else ""))
         if not condition:
             failures.append("%s: %s" % (version, name))
 
+    return check
+
+
+def decode(protocol, raw):
+    """Rahmen aus dem Mitschnitt und die Zustaende, die der Sketch daraus liest."""
     lines = [line for line in raw.decode("ascii", "replace").split("\n") if line.strip().startswith("{")]
     states = []
     printer = None
@@ -183,6 +223,14 @@ def analyse(version, raw, fake, service):
                 round(printer.fraction_printed, 3),
             )
         )
+    return lines, states
+
+
+def analyse(version, raw, fake, service):
+    protocol = service.config.protocol
+    failures = []
+    check = make_check(version, failures)
+    lines, states = decode(protocol, raw)
 
     print("\n=== Sketch %s - %s" % (protocol.version, protocol.label))
     print("Rahmen: %d | Abfragen beantwortet: %d | Benachrichtigungen: %d"
@@ -235,6 +283,30 @@ def analyse(version, raw, fake, service):
     return failures
 
 
+def analyse_restart(version, raw, fake, service):
+    protocol = service.config.protocol
+    failures = []
+    check = make_check(version, failures)
+    _, states = decode(protocol, raw)
+    letters = [state[0] for state in states]
+    hotend = {state[3] for state in states}
+
+    print("\n=== Sketch %s - Klipper-Neustart" % protocol.version)
+    print("Statusverlauf: %s" % " ".join(letters))
+    check("Werte vor dem Neustart kommen an", 24.1 in hotend)
+    check(
+        "Trennung wird gemeldet",
+        service.config.printer.offline_status.value in letters,
+        " ".join(letters),
+    )
+    check("Abonnement wird erneuert", fake.subscriptions == 2, "%d Abonnements" % fake.subscriptions)
+    check("Antwort auf das neue Abonnement kommt an", 44.4 in hotend, str(sorted(hotend)))
+    check("Aktualisierung danach kommt an", 55.5 in hotend, str(sorted(hotend)))
+    check("am Ende wieder Leerlauf", letters[-1] == "I", "status=%s" % letters[-1])
+    check("Verbindung bleibt bestehen", fake.connections == 1, "%d Verbindungen" % fake.connections)
+    return failures
+
+
 def _valid(protocol, line):
     try:
         protocol.validate_frame(line + "\n")
@@ -249,6 +321,8 @@ def main(argv):
     for version in versions:
         raw, fake, service = asyncio.run(collect(version))
         failures.extend(analyse(version, raw, fake, service))
+        raw, fake, service = asyncio.run(collect(version, drive_restart, RESTART_DURATION))
+        failures.extend(analyse_restart(version, raw, fake, service))
 
     print()
     if failures:

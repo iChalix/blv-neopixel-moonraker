@@ -38,6 +38,7 @@ class MoonrakerClient:
         self._on_change = on_change or (lambda: None)
         self._next_id = 0
         self._pending: dict = {}
+        self._tasks: set = set()
 
     # ------------------------------------------------------------------ oeffentlich
 
@@ -90,11 +91,11 @@ class MoonrakerClient:
                 self._on_change()
                 await reader
             finally:
-                reader.cancel()
-                try:
-                    await reader
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
+                tasks = [reader] + list(self._tasks)
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                self._tasks.clear()
 
     async def _bootstrap(self, socket) -> None:
         info = await self._request(socket, "server.info")
@@ -115,6 +116,23 @@ class MoonrakerClient:
         LOGGER.info("Abonnement aktiv: %s", ", ".join(sorted(self._mapper.subscription())))
         self._on_change()
 
+    def _spawn(self, coroutine) -> None:
+        # Aufrufe aus der Leseschleife heraus brauchen eine eigene Aufgabe: Ihre
+        # Antwort kommt ueber genau diese Leseschleife.
+        task = asyncio.ensure_future(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _resubscribe(self, socket) -> None:
+        """Abonnement nach einem Klipper-Neustart erneuern."""
+        try:
+            await self._subscribe(socket)
+        except Exception as exc:  # noqa: BLE001
+            # Ohne Abonnement kaemen keine Daten mehr: Sitzung beenden, run()
+            # verbindet dann neu.
+            LOGGER.warning("Abonnement fehlgeschlagen: %s", str(exc) or type(exc).__name__)
+            await socket.close()
+
     async def _read_loop(self, socket) -> None:
         async for raw in socket:
             try:
@@ -122,9 +140,9 @@ class MoonrakerClient:
             except (TypeError, ValueError):
                 LOGGER.debug("ungueltige Nachricht verworfen")
                 continue
-            await self._dispatch(socket, message)
+            self._dispatch(socket, message)
 
-    async def _dispatch(self, socket, message: dict) -> None:
+    def _dispatch(self, socket, message: dict) -> None:
         if not isinstance(message, dict):
             return
 
@@ -147,7 +165,7 @@ class MoonrakerClient:
                 self._on_change()
         elif method == "notify_klippy_ready":
             self._mapper.set_klippy_state("ready")
-            await self._subscribe(socket)
+            self._spawn(self._resubscribe(socket))
         elif method == "notify_klippy_shutdown":
             self._mapper.set_klippy_state("shutdown")
             self._on_change()

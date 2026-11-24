@@ -77,37 +77,98 @@ fi
 
 # ---------------------------------------------------------------- Konfiguration
 
-# Sucht USB-Seriell-Adapter (CH340, FTDI, CP210x, Prolific) unter
-# /dev/serial/by-id. Bewusst NICHT mitgezaehlt werden Arduino-, Klipper- und
-# Probe-Geraete (z. B. "usb-Arduino__www.arduino.cc__0042_...", "usb-Klipper_...",
+SYS_TTY="/sys/class/tty"
+DEV_DIR="/dev"
+
+# Herstellername des USB-Geraets hinter einer seriellen Schnittstelle (ohne
+# eigenen Namen die Hersteller-ID, so wie udev es fuer by-id macht).
+usb_vendor() {
+    local dir vendor=""
+    dir="$(readlink -f "${SYS_TTY}/$1/device" 2>/dev/null || true)"
+    while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+        if [ -r "${dir}/idVendor" ]; then
+            if [ -r "${dir}/manufacturer" ]; then
+                vendor="$(cat "${dir}/manufacturer" 2>/dev/null || true)"
+            fi
+            if [ -z "$vendor" ]; then vendor="$(cat "${dir}/idVendor")"; fi
+            break
+        fi
+        dir="$(dirname "$dir")"
+    done
+    printf '%s' "$vendor"
+}
+
+# Stabiler Pfad einer Schnittstelle unter /dev/serial/<by-id|by-path>.
+stable_path() {
+    local link target
+    target="$(readlink -f "${DEV_DIR}/$2")"
+    for link in "${DEV_DIR}/serial/$1"/*; do
+        [ -e "$link" ] || continue
+        if is_duplicate_path "$link"; then continue; fi
+        if [ "$(readlink -f "$link")" = "$target" ]; then
+            printf '%s' "$link"
+            return 0
+        fi
+    done
+}
+
+# Neuere udev-Versionen legen je Buchse zwei by-path-Namen an ("...-usb-0:1.2..."
+# und "...-usbv2-0:1.2..."); der zweite wird uebergangen.
+is_duplicate_path() {
+    local plain
+    plain="$(printf '%s' "$1" | sed 's/-usbv[0-9]*-/-usb-/')"
+    [ "$plain" != "$1" ] && [ -e "$plain" ]
+}
+
+# Sucht USB-Seriell-Adapter (CH340, FTDI, CP210x, Prolific). Gezaehlt werden die
+# Schnittstellen selbst und nicht die Namen unter /dev/serial/by-id: CH340 haben
+# keine Seriennummer, zwei davon teilen sich dort einen einzigen Eintrag.
+# Bewusst NICHT mitgezaehlt werden Arduino-, Klipper- und Probe-Geraete (z. B.
+# "usb-Arduino__www.arduino.cc__0042_...", "usb-Klipper_...",
 # "usb-Cartographer_..."): An einem Drucker sind das in der Regel die MCUs, und
 # die Middleware darf dort nichts hinschreiben.
 # Ergebnis: ADAPTER_COUNT (Anzahl) und ADAPTER_PATH (nur bei genau einem Treffer).
 detect_adapter() {
-    local dev name
+    local tty name found=""
     ADAPTER_COUNT=0
     ADAPTER_PATH=""
-    for dev in /dev/serial/by-id/*; do
-        [ -e "$dev" ] || continue
-        name="$(basename "$dev")"
-        case "$name" in
-            usb-1a86_*|usb-FTDI_*|usb-Silicon_Labs_*|usb-Prolific_*)
+    for tty in "${SYS_TTY}"/ttyUSB* "${SYS_TTY}"/ttyACM*; do
+        name="$(basename "$tty")"
+        if [ ! -e "$tty" ] || [ ! -e "${DEV_DIR}/${name}" ]; then continue; fi
+        case "$(usb_vendor "$name")" in
+            1a86*|FTDI*|"Silicon Labs"*|Prolific*)
                 ADAPTER_COUNT=$((ADAPTER_COUNT + 1))
-                ADAPTER_PATH="$dev"
+                found="$name"
                 ;;
         esac
     done
-    if [ "$ADAPTER_COUNT" != "1" ]; then ADAPTER_PATH=""; fi
+    if [ "$ADAPTER_COUNT" = "1" ]; then
+        ADAPTER_PATH="$(stable_path by-id "$found")"
+        if [ -z "$ADAPTER_PATH" ]; then ADAPTER_PATH="$(stable_path by-path "$found")"; fi
+    fi
 }
 
 list_serial_devices() {
     local dev found=0
-    for dev in /dev/serial/by-id/*; do
+    for dev in "${DEV_DIR}"/serial/by-id/* "${DEV_DIR}"/serial/by-path/*; do
         [ -e "$dev" ] || continue
+        if is_duplicate_path "$dev"; then continue; fi
         found=1
-        echo "    $dev"
+        echo "    $dev -> $(basename "$(readlink -f "$dev")")"
     done
     if [ "$found" = "0" ]; then echo "    (keine)"; fi
+}
+
+set_port() {
+    python3 - "$CONFIG_FILE" "$1" <<'PY'
+import re, sys
+path, port = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+text = re.sub(r"^port = .*$", lambda _: ("port = %s" % port).rstrip(), text, count=1, flags=re.M)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
 }
 
 info "Konfiguration: ${CONFIG_FILE}"
@@ -116,22 +177,21 @@ if [ -f "$CONFIG_FILE" ]; then
 else
     cp "${SRC_DIR}/config/blv-neopixel.conf" "$CONFIG_FILE"
     detect_adapter
+    # Ohne eindeutigen Treffer wird der Beispielpfad geleert: Er trifft sonst
+    # womoeglich einen fremden CH340.
+    set_port "$ADAPTER_PATH"
     if [ -n "$ADAPTER_PATH" ]; then
-        python3 - "$CONFIG_FILE" "$ADAPTER_PATH" <<'PY'
-import re, sys
-path, port = sys.argv[1], sys.argv[2]
-with open(path, encoding="utf-8") as fh:
-    text = fh.read()
-text = re.sub(r"^port = .*$", "port = %s" % port, text, count=1, flags=re.M)
-with open(path, "w", encoding="utf-8") as fh:
-    fh.write(text)
-PY
         echo "serielle Schnittstelle eingetragen: ${ADAPTER_PATH}"
     else
         if [ "$ADAPTER_COUNT" = "0" ]; then
             echo "ACHTUNG: kein USB-Seriell-Adapter (CH340/FTDI/CP210x) gefunden."
+        elif [ "$ADAPTER_COUNT" = "1" ]; then
+            echo "ACHTUNG: USB-Seriell-Adapter gefunden, aber ohne festen Pfad unter /dev/serial."
         else
             echo "ACHTUNG: ${ADAPTER_COUNT} USB-Seriell-Adapter gefunden - Auswahl nicht eindeutig."
+            echo "CH340 haben keine Seriennummer und teilen sich einen by-id-Namen: bei"
+            echo "mehreren den Pfad unter /dev/serial/by-path/ verwenden und jeden Adapter"
+            echo "an seiner USB-Buchse lassen."
         fi
         echo "Der Port wurde NICHT automatisch gesetzt. Vorhandene Geraete:"
         list_serial_devices

@@ -197,6 +197,7 @@ def cmd_ports(args, cfg: Config) -> int:
         print("%-24s %s" % ("", hwid))
     print()
     print("Tipp: stabile Pfade liegen unter /dev/serial/by-id/ - die bitte in die Konfiguration eintragen.")
+    print("Zwei CH340 teilen sich dort einen Namen - dann /dev/serial/by-path/ verwenden.")
     return 0
 
 
