@@ -13,6 +13,8 @@ beim Release einen datierten Abschnitt (siehe README, Abschnitt "Releases").
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-24
+
 ### Behoben
 - Nach einem Klipper-Neustart (FIRMWARE_RESTART) blockierte die Erneuerung des
   Abonnements die Leseschleife, ueber die ihre Antwort kommen muss: Die Ringe
